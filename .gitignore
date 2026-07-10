@@ -203,6 +203,9 @@ cython_debug/
 # Temporary file for partial code execution
 tempCodeRunnerFile.py
 
+# Local user preferences (camera flip, etc.)
+user_settings.json
+
 # Ruff stuff:
 .ruff_cache/
 
