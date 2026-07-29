@@ -1,6 +1,12 @@
 """Tunable thresholds for gesture detection."""
 
+from __future__ import annotations
+
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from calibration import CalibrationBounds
 
 ROOT_DIR = Path(__file__).resolve().parent
 MODEL_PATH = ROOT_DIR / "models" / "hand_landmarker.task"
@@ -49,3 +55,9 @@ FRAME_WIDTH = 1280
 FRAME_HEIGHT = 720
 MIRROR_CAMERA = True   # flip the preview (selfie view)
 INVERT_MOUSE_X = True  # flip horizontal mouse; press X at runtime to toggle
+
+# Filled by corner calibration (K key); None uses MOUSE_PAD_MARGIN fallback
+SCREEN_CALIBRATION = None
+
+# Set by calibration (K key); None = use MOUSE_PAD_MARGIN fallback
+CALIBRATION: CalibrationBounds | None = None

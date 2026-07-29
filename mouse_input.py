@@ -29,15 +29,20 @@ class SmoothPointer:
         self._y = None
 
     def map_to_screen(self, norm_x: float, norm_y: float) -> tuple[int, int]:
-        margin = config.MOUSE_PAD_MARGIN
-        raw_x = (1.0 - norm_x) if config.INVERT_MOUSE_X else norm_x
-        x = (raw_x - margin) / (1.0 - 2 * margin)
-        y = (norm_y - margin) / (1.0 - 2 * margin)
-        x = max(0.0, min(1.0, x))
-        y = max(0.0, min(1.0, y))
+        if config.SCREEN_CALIBRATION is not None:
+            x, y = config.SCREEN_CALIBRATION.remap(norm_x, norm_y)
+        else:
+            margin = config.MOUSE_PAD_MARGIN
+            x = (norm_x - margin) / (1.0 - 2 * margin)
+            y = (norm_y - margin) / (1.0 - 2 * margin)
+            x = max(0.0, min(1.0, x))
+            y = max(0.0, min(1.0, y))
 
-        target_x = x * _screen_w
-        target_y = y * _screen_h
+        raw_x = (1.0 - x) if config.INVERT_MOUSE_X else x
+        screen_y = y
+
+        target_x = raw_x * _screen_w
+        target_y = screen_y * _screen_h
 
         if self._x is None or self._y is None:
             self._x, self._y = target_x, target_y

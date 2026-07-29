@@ -35,6 +35,17 @@ python main.py
 
 A preview window shows the camera feed, detected hand landmarks, and the active mode. Press **Q** or **Esc** to quit. Camera flip (**C**) and mouse direction (**X**) are remembered between runs.
 
+### Calibration
+
+Press **K** to calibrate pointer range (saved automatically):
+
+1. Pinch index + middle and point at the **top-left** of your screen → **SPACE**
+2. Point at **top-right** → **SPACE**
+3. Point at **bottom-right** → **SPACE**
+4. Point at **bottom-left** → **SPACE**
+
+Your hand positions are mapped to the full screen, removing dead zones at the edges. Press **R** to reset calibration.
+
 ## Tuning
 
 Edit `config.py` to adjust pinch sensitivity, scroll speed, mouse smoothing, and camera settings:

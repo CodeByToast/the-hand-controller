@@ -22,7 +22,9 @@ from mediapipe.tasks.python.vision import drawing_utils
 from mediapipe.tasks.python.vision.hand_landmarker import HandLandmarksConnections
 
 import config
+from calibration import Calibrator
 from gestures import GestureMode, GestureRecognizer
+from landmarks import pointer_position
 from mouse_input import MouseController
 import settings
 
@@ -77,7 +79,7 @@ def draw_overlay(frame, mode: GestureMode, fps: float, tip_gap: float = 0.0) -> 
     )
     cv2.putText(
         frame,
-        f"{fps:.0f} FPS  |  cam mirror: {mirror_cam} (C)  |  mouse flip: {mirror_x} (X)  |  Q quit",
+        f"{fps:.0f} FPS  |  calibrate: K  |  cam: {mirror_cam} (C)  |  flip: {mirror_x} (X)  |  Q quit",
         (16, 54),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.45,
@@ -117,6 +119,81 @@ def draw_overlay(frame, mode: GestureMode, fps: float, tip_gap: float = 0.0) -> 
         y -= 20
 
 
+def draw_calibration_overlay(frame, calibrator: Calibrator, pointer: tuple[float, float] | None) -> None:
+    h, w = frame.shape[:2]
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (0, 0), (w, h), (20, 40, 80), -1)
+    cv2.addWeighted(overlay, 0.55, frame, 0.45, 0, frame)
+
+    cv2.putText(
+        frame,
+        "CALIBRATION",
+        (16, 40),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        1.0,
+        (80, 200, 255),
+        2,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        frame,
+        calibrator.prompt,
+        (16, 80),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.65,
+        (240, 240, 240),
+        2,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        frame,
+        "Pinch index+middle to point. SPACE=capture  ESC=cancel",
+        (16, 115),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        (200, 200, 200),
+        1,
+        cv2.LINE_AA,
+    )
+
+    if calibrator.message:
+        cv2.putText(
+            frame,
+            calibrator.message,
+            (16, 145),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (100, 255, 150),
+            2,
+            cv2.LINE_AA,
+        )
+
+    # Corner guides
+    pad = 28
+    cv2.circle(frame, (pad, pad), 10, (0, 255, 255), 2)
+    cv2.circle(frame, (w - pad, pad), 10, (0, 255, 255), 2)
+    cv2.circle(frame, (w - pad, h - pad), 10, (0, 255, 255), 2)
+    cv2.circle(frame, (pad, h - pad), 10, (0, 255, 255), 2)
+
+    if pointer is not None:
+        px = int(pointer[0] * w)
+        py = int(pointer[1] * h)
+        cv2.circle(frame, (px, py), 14, (0, 255, 255), 2)
+        cv2.circle(frame, (px, py), 4, (0, 255, 255), -1)
+
+
+def draw_calibration_bounds(frame) -> None:
+    cal = config.SCREEN_CALIBRATION
+    if cal is None:
+        return
+    h, w = frame.shape[:2]
+    x1 = int(cal.min_x * w)
+    y1 = int(cal.min_y * h)
+    x2 = int(cal.max_x * w)
+    y2 = int(cal.max_y * h)
+    cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 180, 0), 1)
+
+
 def main() -> int:
     settings.load()
 
@@ -131,14 +208,16 @@ def main() -> int:
     landmarker = create_hand_landmarker()
     recognizer = GestureRecognizer()
     mouse = MouseController()
+    calibrator = Calibrator()
     current_mode = GestureMode.IDLE
     tip_gap = 0.0
+    last_pointer: tuple[float, float] | None = None
 
     frame_ts_ms = 0
     fps_clock = time.perf_counter()
     fps = 30.0
 
-    print("Hand Controller running. Press Q in the preview window to quit.")
+    print("Hand Controller running. Press Q to quit, K to calibrate.")
 
     try:
         while True:
@@ -158,6 +237,7 @@ def main() -> int:
             frame_ts_ms += 33
             result = landmarker.detect_for_video(mp_image, frame_ts_ms)
 
+            last_pointer = None
             if result.hand_landmarks:
                 for hand_landmarks in result.hand_landmarks:
                     drawing_utils.draw_landmarks(
@@ -165,6 +245,11 @@ def main() -> int:
                         hand_landmarks,
                         HandLandmarksConnections.HAND_CONNECTIONS,
                     )
+                    last_pointer = pointer_position(hand_landmarks)
+
+                    if calibrator.active:
+                        continue
+
                     state = recognizer.recognize(hand_landmarks)
                     mouse.apply(state)
                     current_mode = state.mode
@@ -176,12 +261,36 @@ def main() -> int:
                         cv2.circle(frame, (px, py), 12, (0, 255, 255), 2)
                         cv2.circle(frame, (px, py), 3, (0, 255, 255), -1)
 
-            draw_overlay(frame, current_mode, fps, tip_gap)
+            if calibrator.active:
+                draw_calibration_overlay(frame, calibrator, last_pointer)
+            else:
+                draw_calibration_bounds(frame)
+                draw_overlay(frame, current_mode, fps, tip_gap)
             cv2.imshow("Hand Controller", frame)
 
             key = cv2.waitKey(1) & 0xFF
-            if key in (ord("q"), ord("Q"), 27):
+            if key in (ord("q"), ord("Q")) and not calibrator.active:
                 break
+            if key == 27:
+                if calibrator.active:
+                    calibrator.cancel()
+                else:
+                    break
+            if key == ord(" ") and calibrator.active:
+                if calibrator.capture(last_pointer):
+                    settings.save()
+                    mouse._pointer.reset()
+                    print("Calibration saved.")
+            if key in (ord("k"), ord("K")):
+                if calibrator.active:
+                    calibrator.cancel()
+                else:
+                    calibrator.start()
+                    print("Calibration started — follow on-screen prompts.")
+            if key in (ord("r"), ord("R")) and not calibrator.active:
+                settings.clear_calibration_and_save()
+                mouse._pointer.reset()
+                print("Calibration cleared.")
             if key in (ord("x"), ord("X")):
                 config.INVERT_MOUSE_X = not config.INVERT_MOUSE_X
                 settings.save()
