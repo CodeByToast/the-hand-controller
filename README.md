@@ -16,10 +16,14 @@ Control your Windows PC with hand gestures using your webcam. Built with [MediaP
 ## Requirements
 
 - Windows 10/11
-- Python 3.9–3.12
+- 64-bit Python 3.9 or newer; package availability can limit support for the newest releases
 - Webcam
 
 ## Setup
+
+On Windows, double-click `install.bat`. It uses the Windows Python Launcher to select your default Python 3 (or `python` if the launcher is unavailable), creates an isolated environment, and installs the required packages. An internet connection is needed for first-time setup. Python 3.13.5 is supported by the app's current installed dependencies; newer versions can work when compatible package builds are available.
+
+Manual setup:
 
 ```bash
 python -m venv .venv
@@ -30,10 +34,14 @@ pip install -r requirements.txt
 ## Run
 
 ```bash
-python main.py
+run.bat
 ```
 
-A preview window shows the camera feed, detected hand landmarks, and the active mode. Press **Q** or **Esc** to quit. Camera flip (**C**) and mouse direction (**X**) are remembered between runs.
+After installation, double-click `run.bat` to start the app. On its first run, it creates a **The Hand Controller** shortcut on your Desktop; later runs leave that shortcut in place. You can also launch manually with `.venv\Scripts\python.exe main.py`. Preferences are stored in your Windows user profile, so the app folder does not need write access.
+
+A preview window shows the camera feed, detected hand landmarks, and the active mode. Press **Q** or **Esc** to quit. Press **C** to turn the camera off or back on, **M** to mirror the preview, and **X** to reverse mouse direction. Mirror and mouse settings are remembered between runs.
+
+At startup, the app probes common camera resolutions and uses the highest mode it can confirm from captured frames. MediaPipe processes those same frames; its model chooses its own internal input scaling. Higher camera resolutions can increase processing load.
 
 ### Calibration
 
@@ -56,7 +64,7 @@ Edit `config.py` to adjust pinch sensitivity, scroll speed, mouse smoothing, and
 - `CAMERA_INDEX` — change if you have multiple cameras
 - `POINTER_RAY_EXTEND` — how far to project along your finger toward the screen (try `0.4`–`0.8`)
 - `POINTER_Z_Y_SCALE` — fine-tune vertical aim for an overhead camera
-- `MIRROR_CAMERA` — flip the webcam preview (or press **C** while running)
+- `MIRROR_CAMERA` — flip the webcam preview (or press **M** while running)
 - `INVERT_MOUSE_X` — flip horizontal mouse direction (or press **X** while running)
 
 ## Tips

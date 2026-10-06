@@ -51,8 +51,6 @@ MIN_TRACKING_CONFIDENCE = 0.6
 
 # Camera / direction
 CAMERA_INDEX = 0
-FRAME_WIDTH = 1280
-FRAME_HEIGHT = 720
 MIRROR_CAMERA = True   # flip the preview (selfie view)
 INVERT_MOUSE_X = True  # flip horizontal mouse; press X at runtime to toggle
 

@@ -14,19 +14,43 @@ from __future__ import annotations
 import sys
 import time
 
-import cv2
-import mediapipe as mp
-from mediapipe.tasks import python
-from mediapipe.tasks.python import vision
-from mediapipe.tasks.python.vision import drawing_utils
-from mediapipe.tasks.python.vision.hand_landmarker import HandLandmarksConnections
+def explain_error(error: Exception) -> str:
+    if isinstance(error, ModuleNotFoundError):
+        package = error.name or "a required package"
+        return f"Python package '{package}' is missing. Run install.bat, then start the app again."
+    if isinstance(error, FileNotFoundError):
+        return "The hand-tracking model is missing. Make sure models/hand_landmarker.task is in the app folder."
+    if isinstance(error, PermissionError):
+        return "Access was denied. Check camera permissions and close any other app using the webcam."
+    if isinstance(error, (ImportError, OSError)):
+        return "A required component could not load. Run install.bat and use the Python environment it creates."
+    detail = str(error).strip()
+    if detail:
+        return f"The app could not continue: {detail}"
+    return "The app could not continue because of an unexpected problem."
 
-import config
-from calibration import Calibrator
-from gestures import GestureMode, GestureRecognizer
-from landmarks import pointer_position
-from mouse_input import MouseController
-import settings
+
+try:
+    import cv2
+    import mediapipe as mp
+    import numpy as np
+    from mediapipe.tasks import python
+    from mediapipe.tasks.python import vision
+    from mediapipe.tasks.python.vision import drawing_utils
+    from mediapipe.tasks.python.vision.hand_landmarker import HandLandmarksConnections
+
+    import config
+    from calibration import Calibrator
+    from gestures import GestureMode, GestureRecognizer
+    from landmarks import pointer_position
+    from mouse_input import MouseController
+    import settings
+except ModuleNotFoundError as error:
+    print(explain_error(error))
+    raise SystemExit(1) from None
+except (ImportError, OSError) as error:
+    print(explain_error(error))
+    raise SystemExit(1) from None
 
 MODE_LABELS = {
     GestureMode.IDLE: "idle",
@@ -39,6 +63,24 @@ MODE_COLORS = {
     GestureMode.MOUSE: (80, 220, 80),
     GestureMode.SCROLL: (80, 180, 255),
 }
+
+CAMERA_RESOLUTIONS = (
+    (4032, 3024),
+    (4000, 3000),
+    (3840, 2160),
+    (3264, 2448),
+    (2560, 1920),
+    (2560, 1440),
+    (2048, 1536),
+    (1920, 1080),
+    (1600, 1200),
+    (1280, 960),
+    (1280, 720),
+    (1024, 768),
+    (960, 540),
+    (800, 600),
+    (640, 480),
+)
 
 
 def create_hand_landmarker() -> vision.HandLandmarker:
@@ -57,6 +99,41 @@ def create_hand_landmarker() -> vision.HandLandmarker:
         min_tracking_confidence=config.MIN_TRACKING_CONFIDENCE,
     )
     return vision.HandLandmarker.create_from_options(options)
+
+
+def open_camera() -> cv2.VideoCapture | None:
+    camera_indices = [0]
+    if config.CAMERA_INDEX not in camera_indices:
+        camera_indices.append(config.CAMERA_INDEX)
+    camera_indices.extend(index for index in range(1, 5) if index not in camera_indices)
+    for camera_index in camera_indices:
+        camera = cv2.VideoCapture(camera_index)
+        if not camera.isOpened():
+            camera.release()
+            continue
+
+        best_size = (0, 0)
+        for width, height in CAMERA_RESOLUTIONS:
+            camera.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            camera.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            for _ in range(3):
+                ok, frame = camera.read()
+                if not ok:
+                    break
+                actual_size = (frame.shape[1], frame.shape[0])
+                if actual_size[0] * actual_size[1] > best_size[0] * best_size[1]:
+                    best_size = actual_size
+                if actual_size == (width, height):
+                    print(f"Using webcam resolution: {width}x{height}")
+                    return camera
+
+        if best_size != (0, 0):
+            camera.set(cv2.CAP_PROP_FRAME_WIDTH, best_size[0])
+            camera.set(cv2.CAP_PROP_FRAME_HEIGHT, best_size[1])
+            print(f"Using webcam resolution: {best_size[0]}x{best_size[1]}")
+            return camera
+        camera.release()
+    return None
 
 
 def draw_overlay(frame, mode: GestureMode, fps: float, tip_gap: float = 0.0) -> None:
@@ -79,7 +156,7 @@ def draw_overlay(frame, mode: GestureMode, fps: float, tip_gap: float = 0.0) -> 
     )
     cv2.putText(
         frame,
-        f"{fps:.0f} FPS  |  calibrate: K  |  cam: {mirror_cam} (C)  |  flip: {mirror_x} (X)  |  Q quit",
+        f"{fps:.0f} FPS  |  K calibrate  |  C camera off  |  mirror: {mirror_cam} (M)  |  mouse flip: {mirror_x} (X)  |  Q quit",
         (16, 54),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.45,
@@ -197,12 +274,12 @@ def draw_calibration_bounds(frame) -> None:
 def main() -> int:
     settings.load()
 
-    cap = cv2.VideoCapture(config.CAMERA_INDEX)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.FRAME_WIDTH)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.FRAME_HEIGHT)
-
-    if not cap.isOpened():
-        print("Could not open webcam. Check CAMERA_INDEX in config.py.")
+    cap = open_camera()
+    if cap is None:
+        print(
+            "No webcam could be opened. Connect or enable a camera, close other apps using it, "
+            "and check Windows camera permission settings."
+        )
         return 1
 
     landmarker = create_hand_landmarker()
@@ -221,51 +298,65 @@ def main() -> int:
 
     try:
         while True:
-            ok, frame = cap.read()
-            if not ok:
-                print("Failed to read camera frame.")
-                break
-
-            now = time.perf_counter()
-            fps = 0.9 * fps + 0.1 / max(now - fps_clock, 1e-6)
-            fps_clock = now
-
-            frame = cv2.flip(frame, 1) if config.MIRROR_CAMERA else frame
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-
-            frame_ts_ms += 33
-            result = landmarker.detect_for_video(mp_image, frame_ts_ms)
-
-            last_pointer = None
-            if result.hand_landmarks:
-                for hand_landmarks in result.hand_landmarks:
-                    drawing_utils.draw_landmarks(
-                        frame,
-                        hand_landmarks,
-                        HandLandmarksConnections.HAND_CONNECTIONS,
-                    )
-                    last_pointer = pointer_position(hand_landmarks)
-
-                    if calibrator.active:
-                        continue
-
-                    state = recognizer.recognize(hand_landmarks)
-                    mouse.apply(state)
-                    current_mode = state.mode
-                    tip_gap = state.tip_gap
-                    if state.pointer_norm and current_mode == GestureMode.MOUSE:
-                        h, w = frame.shape[:2]
-                        px = int(state.pointer_norm[0] * w)
-                        py = int(state.pointer_norm[1] * h)
-                        cv2.circle(frame, (px, py), 12, (0, 255, 255), 2)
-                        cv2.circle(frame, (px, py), 3, (0, 255, 255), -1)
-
-            if calibrator.active:
-                draw_calibration_overlay(frame, calibrator, last_pointer)
+            if cap is None:
+                frame = np.zeros((180, 640, 3), dtype=np.uint8)
+                cv2.putText(
+                    frame,
+                    "Camera is off. Press C to turn it on, or Q to quit.",
+                    (18, 95),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.55,
+                    (230, 230, 230),
+                    1,
+                    cv2.LINE_AA,
+                )
             else:
-                draw_calibration_bounds(frame)
-                draw_overlay(frame, current_mode, fps, tip_gap)
+                ok, frame = cap.read()
+                if not ok:
+                    raise RuntimeError(
+                        "The webcam stopped sending video. Reconnect it and close other apps using it."
+                    )
+
+                now = time.perf_counter()
+                fps = 0.9 * fps + 0.1 / max(now - fps_clock, 1e-6)
+                fps_clock = now
+
+                frame = cv2.flip(frame, 1) if config.MIRROR_CAMERA else frame
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+
+                frame_ts_ms += 33
+                result = landmarker.detect_for_video(mp_image, frame_ts_ms)
+
+                last_pointer = None
+                if result.hand_landmarks:
+                    for hand_landmarks in result.hand_landmarks:
+                        drawing_utils.draw_landmarks(
+                            frame,
+                            hand_landmarks,
+                            HandLandmarksConnections.HAND_CONNECTIONS,
+                        )
+                        last_pointer = pointer_position(hand_landmarks)
+
+                        if calibrator.active:
+                            continue
+
+                        state = recognizer.recognize(hand_landmarks)
+                        mouse.apply(state)
+                        current_mode = state.mode
+                        tip_gap = state.tip_gap
+                        if state.pointer_norm and current_mode == GestureMode.MOUSE:
+                            h, w = frame.shape[:2]
+                            px = int(state.pointer_norm[0] * w)
+                            py = int(state.pointer_norm[1] * h)
+                            cv2.circle(frame, (px, py), 12, (0, 255, 255), 2)
+                            cv2.circle(frame, (px, py), 3, (0, 255, 255), -1)
+
+                if calibrator.active:
+                    draw_calibration_overlay(frame, calibrator, last_pointer)
+                else:
+                    draw_calibration_bounds(frame)
+                    draw_overlay(frame, current_mode, fps, tip_gap)
             cv2.imshow("Hand Controller", frame)
 
             key = cv2.waitKey(1) & 0xFF
@@ -276,6 +367,25 @@ def main() -> int:
                     calibrator.cancel()
                 else:
                     break
+            if key in (ord("c"), ord("C")):
+                if cap is None:
+                    cap = open_camera()
+                    if cap is None:
+                        print("No webcam could be opened. Check camera connection and Windows privacy settings.")
+                    else:
+                        print("Camera turned on.")
+                else:
+                    cap.release()
+                    cap = None
+                    if calibrator.active:
+                        calibrator.cancel()
+                    mouse._pointer.reset()
+                    print("Camera turned off.")
+                continue
+
+            if cap is None:
+                continue
+
             if key == ord(" ") and calibrator.active:
                 if calibrator.capture(last_pointer):
                     settings.save()
@@ -295,13 +405,14 @@ def main() -> int:
                 config.INVERT_MOUSE_X = not config.INVERT_MOUSE_X
                 settings.save()
                 print(f"INVERT_MOUSE_X = {config.INVERT_MOUSE_X}")
-            if key in (ord("c"), ord("C")):
+            if key in (ord("m"), ord("M")):
                 config.MIRROR_CAMERA = not config.MIRROR_CAMERA
                 settings.save()
                 print(f"MIRROR_CAMERA = {config.MIRROR_CAMERA}")
     finally:
         settings.save()
-        cap.release()
+        if cap is not None:
+            cap.release()
         cv2.destroyAllWindows()
         landmarker.close()
 
@@ -309,4 +420,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception as error:
+        print(explain_error(error))
+        sys.exit(1)
