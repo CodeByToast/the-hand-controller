@@ -36,6 +36,9 @@ SINGLE_TAP_DELAY = 0.28
 # Mouse movement (lower = smoother / less jitter)
 SMOOTHING = 0.18
 MOUSE_PAD_MARGIN = 0.12
+BUTTON_MAGNET_RADIUS = 36
+BUTTON_MAGNET_RELEASE = 72
+BUTTON_MAGNET_REFRESH = 1.0
 # Extrapolate cursor along wrist→finger line (overhead camera parallax fix)
 POINTER_RAY_EXTEND = 0.55
 POINTER_Z_Y_SCALE = -0.30

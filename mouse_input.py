@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ctypes
+import threading
+import time
 from ctypes import wintypes
 
 import config
@@ -16,6 +18,142 @@ _keyboard = KeyboardController()
 _user32 = ctypes.windll.user32
 _screen_w = _user32.GetSystemMetrics(0)
 _screen_h = _user32.GetSystemMetrics(1)
+_user32.WindowFromPoint.argtypes = [wintypes.POINT]
+_user32.WindowFromPoint.restype = wintypes.HWND
+_user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+_user32.GetAncestor.restype = wintypes.HWND
+
+
+class ClickableTargetMagnet:
+    """Snap the pointer to nearby Windows UI Automation controls."""
+
+    _ACTION_PATTERNS = (
+        "iface_invoke",
+        "iface_selection_item",
+        "iface_toggle",
+        "iface_expand_collapse",
+    )
+
+    @classmethod
+    def _is_actionable(cls, element) -> bool:
+        for pattern in cls._ACTION_PATTERNS:
+            try:
+                if getattr(element, pattern, None) is not None:
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def __init__(self) -> None:
+        self._targets: list[tuple[int, int, int, int, int]] = []
+        self._targets_lock = threading.Lock()
+        self._locked_target: tuple[int, int, int, int, int] | None = None
+        self._release_guard: tuple[int, int, int, int, int] | None = None
+        self._thread = threading.Thread(target=self._refresh_loop, daemon=True)
+        self._thread.start()
+
+    def reset(self) -> None:
+        self._locked_target = None
+        self._release_guard = None
+
+    def release(self) -> None:
+        if self._locked_target is not None:
+            self._release_guard = self._locked_target
+            self._locked_target = None
+
+    def apply(self, x: float, y: float) -> tuple[float, float]:
+        with self._targets_lock:
+            targets = self._targets
+        point = wintypes.POINT(int(x), int(y))
+        window = _user32.WindowFromPoint(point)
+        window = _user32.GetAncestor(window, 2) if window else None
+        window_handle = int(window) if window else 0
+
+        if self._release_guard is not None:
+            left, top, right, bottom, target_window = self._release_guard
+            release = config.BUTTON_MAGNET_RELEASE
+            if (
+                target_window == window_handle
+                and left - release <= x <= right + release
+                and top - release <= y <= bottom + release
+            ):
+                return x, y
+            self._release_guard = None
+
+        if self._locked_target is not None:
+            left, top, right, bottom, target_window = self._locked_target
+            release = config.BUTTON_MAGNET_RELEASE
+            if (
+                target_window == window_handle
+                and left - release <= x <= right + release
+                and top - release <= y <= bottom + release
+            ):
+                return (left + right) / 2, (top + bottom) / 2
+            self._locked_target = None
+
+        radius = config.BUTTON_MAGNET_RADIUS
+        nearest: tuple[int, int, int, int, int] | None = None
+        nearest_score = (radius + 1, float("inf"))
+        for left, top, right, bottom, target_window in targets:
+            if target_window != window_handle:
+                continue
+            dx = max(left - x, 0, x - right)
+            dy = max(top - y, 0, y - bottom)
+            score = (max(dx, dy), (right - left) * (bottom - top))
+            if score < nearest_score:
+                nearest = (left, top, right, bottom, target_window)
+                nearest_score = score
+
+        if nearest is not None:
+            self._locked_target = nearest
+            left, top, right, bottom, _ = nearest
+            return (left + right) / 2, (top + bottom) / 2
+        return x, y
+
+    @property
+    def is_locked(self) -> bool:
+        return self._locked_target is not None
+
+    def _refresh_loop(self) -> None:
+        try:
+            import comtypes
+            from pywinauto import Desktop
+
+            comtypes.CoInitialize()
+        except Exception:
+            return
+
+        try:
+            while True:
+                targets = self._read_targets(Desktop)
+                with self._targets_lock:
+                    self._targets = targets
+                time.sleep(config.BUTTON_MAGNET_REFRESH)
+        finally:
+            comtypes.CoUninitialize()
+
+    def _read_targets(self, desktop_type) -> list[tuple[int, int, int, int, int]]:
+        targets = []
+        try:
+            for window in desktop_type(backend="uia").windows():
+                try:
+                    if not window.is_visible():
+                        continue
+                    for element in window.descendants():
+                        if not self._is_actionable(element):
+                            continue
+                        if not element.is_visible() or not element.is_enabled():
+                            continue
+                        rect = element.rectangle()
+                        if rect.width() < 8 or rect.height() < 8:
+                            continue
+                        root_window = _user32.GetAncestor(window.handle, 2) or window.handle
+                        targets.append((rect.left, rect.top, rect.right, rect.bottom, int(root_window)))
+                except Exception:
+                    continue
+        except Exception:
+            return []
+        return targets
 
 
 class SmoothPointer:
@@ -23,10 +161,16 @@ class SmoothPointer:
         self._factor = factor
         self._x: float | None = None
         self._y: float | None = None
+        self._magnet = ClickableTargetMagnet()
 
-    def reset(self) -> None:
+    def reset(self, *, clear_snap: bool = False) -> None:
         self._x = None
         self._y = None
+        if clear_snap:
+            self._magnet.reset()
+
+    def release_snap(self) -> None:
+        self._magnet.release()
 
     def map_to_screen(self, norm_x: float, norm_y: float) -> tuple[int, int]:
         if config.SCREEN_CALIBRATION is not None:
@@ -43,8 +187,11 @@ class SmoothPointer:
 
         target_x = raw_x * _screen_w
         target_y = screen_y * _screen_h
+        target_x, target_y = self._magnet.apply(target_x, target_y)
 
-        if self._x is None or self._y is None:
+        if self._magnet.is_locked:
+            self._x, self._y = target_x, target_y
+        elif self._x is None or self._y is None:
             self._x, self._y = target_x, target_y
         else:
             self._x += (target_x - self._x) * self._factor
@@ -123,6 +270,8 @@ class MouseController:
         if state.mode != self._last_mode:
             if state.mode == GestureMode.IDLE:
                 self._pointer.reset()
+            elif state.mode == GestureMode.MOUSE:
+                self._pointer.release_snap()
             if state.mode != GestureMode.SCROLL:
                 self._scroll.reset()
             self._last_mode = state.mode

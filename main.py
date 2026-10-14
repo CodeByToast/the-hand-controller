@@ -379,7 +379,7 @@ def main() -> int:
                     cap = None
                     if calibrator.active:
                         calibrator.cancel()
-                    mouse._pointer.reset()
+                    mouse._pointer.reset(clear_snap=True)
                     print("Camera turned off.")
                 continue
 
@@ -389,7 +389,7 @@ def main() -> int:
             if key == ord(" ") and calibrator.active:
                 if calibrator.capture(last_pointer):
                     settings.save()
-                    mouse._pointer.reset()
+                    mouse._pointer.reset(clear_snap=True)
                     print("Calibration saved.")
             if key in (ord("k"), ord("K")):
                 if calibrator.active:
@@ -399,7 +399,7 @@ def main() -> int:
                     print("Calibration started — follow on-screen prompts.")
             if key in (ord("r"), ord("R")) and not calibrator.active:
                 settings.clear_calibration_and_save()
-                mouse._pointer.reset()
+                mouse._pointer.reset(clear_snap=True)
                 print("Calibration cleared.")
             if key in (ord("x"), ord("X")):
                 config.INVERT_MOUSE_X = not config.INVERT_MOUSE_X

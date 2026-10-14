@@ -43,6 +43,8 @@ A preview window shows the camera feed, detected hand landmarks, and the active 
 
 At startup, the app probes common camera resolutions and uses the highest mode it can confirm from captured frames. MediaPipe processes those same frames; its model chooses its own internal input scaling. Higher camera resolutions can increase processing load.
 
+When moving the mouse, the pointer snaps to nearby standard Windows buttons, links, tabs, and similar controls. The snap stays in place while you click and releases when you re-enter mouse mode with index and middle fingers together; small click movements will not break it. This uses Windows UI Automation; custom-drawn controls that do not expose accessibility information cannot be detected.
+
 ### Calibration
 
 Press **K** to calibrate pointer range (saved automatically):
@@ -60,6 +62,7 @@ Edit `config.py` to adjust pinch sensitivity, scroll speed, mouse smoothing, and
 
 - `PINCH_ON` / `PINCH_OFF` — how close fingertips must be to register a pinch (lower = stricter)
 - `SMOOTHING` — mouse movement smoothing (0–1, higher = more responsive)
+- `BUTTON_MAGNET_RADIUS` / `BUTTON_MAGNET_RELEASE` — capture and release distances in screen pixels
 - `SCROLL_STEP` — scroll amount per movement
 - `CAMERA_INDEX` — change if you have multiple cameras
 - `POINTER_RAY_EXTEND` — how far to project along your finger toward the screen (try `0.4`–`0.8`)

@@ -16,13 +16,18 @@ class ScreenCalibration:
     max_x: float
     min_y: float
     max_y: float
+    reverse_x: bool = False
 
     def remap(self, norm_x: float, norm_y: float) -> tuple[float, float]:
         span_x = max(self.max_x - self.min_x, MIN_CALIBRATION_SPAN)
         span_y = max(self.max_y - self.min_y, MIN_CALIBRATION_SPAN)
         x = (norm_x - self.min_x) / span_x
         y = (norm_y - self.min_y) / span_y
-        return max(0.0, min(1.0, x)), max(0.0, min(1.0, y))
+        x = max(0.0, min(1.0, x))
+        y = max(0.0, min(1.0, y))
+        if self.reverse_x:
+            x = 1.0 - x
+        return x, y
 
 
 class CalStep(Enum):
@@ -106,11 +111,20 @@ class Calibrator:
         ys = [p[1] for p in self._points]
         min_x, max_x = min(xs), max(xs)
         min_y, max_y = min(ys), max(ys)
+        left_x = (self._points[0][0] + self._points[3][0]) / 2
+        right_x = (self._points[1][0] + self._points[2][0]) / 2
 
         if (max_x - min_x) < MIN_CALIBRATION_SPAN or (max_y - min_y) < MIN_CALIBRATION_SPAN:
             return None
 
-        return ScreenCalibration(min_x=min_x, max_x=max_x, min_y=min_y, max_y=max_y)
+        reverse_x = (left_x < right_x) == config.INVERT_MOUSE_X
+        return ScreenCalibration(
+            min_x=min_x,
+            max_x=max_x,
+            min_y=min_y,
+            max_y=max_y,
+            reverse_x=reverse_x,
+        )
 
 
 def clear_calibration() -> None:
@@ -119,11 +133,13 @@ def clear_calibration() -> None:
 
 def calibration_from_dict(data: dict) -> ScreenCalibration | None:
     try:
+        reverse_x = data.get("reverse_x", config.MIRROR_CAMERA == config.INVERT_MOUSE_X)
         return ScreenCalibration(
             min_x=float(data["min_x"]),
             max_x=float(data["max_x"]),
             min_y=float(data["min_y"]),
             max_y=float(data["max_y"]),
+            reverse_x=bool(reverse_x),
         )
     except (KeyError, TypeError, ValueError):
         return None
@@ -135,4 +151,5 @@ def calibration_to_dict(cal: ScreenCalibration) -> dict:
         "max_x": cal.max_x,
         "min_y": cal.min_y,
         "max_y": cal.max_y,
+        "reverse_x": cal.reverse_x,
     }
